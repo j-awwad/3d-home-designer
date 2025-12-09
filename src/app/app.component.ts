@@ -4,6 +4,7 @@ import {
   ElementRef,
   OnDestroy,
   ViewChild,
+  HostListener,
 } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import * as THREE from 'three';
@@ -20,6 +21,8 @@ type RoomConfig = {
   z: number;
   rotationY: number;
 };
+
+
 
 @Component({
   selector: 'app-root',
@@ -52,11 +55,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private controls!: OrbitControls;
   private frameId = 0;
 
-  // all room groups
+  // highlighted plot (ground) mesh
+  private plotMesh: THREE.Mesh | null = null;
+
+  // all room meshes/groups
   private roomObjects: THREE.Object3D[] = [];
 
   // sofa model
   private sofa!: THREE.Object3D;
+  private sofaRoomId: number | null = null;
 
   // selection / picking
   private raycaster = new THREE.Raycaster();
@@ -66,6 +73,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private currentDragColor: string | null = null;
 
   private selectionBox: THREE.BoxHelper | null = null;
+
+  // drag-room state
+  private draggingRoom: THREE.Object3D | null = null;
+  private dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y = 0
+  private dragStartPoint = new THREE.Vector3();
+  private dragStartPosition = new THREE.Vector3();
 
   // --- house + rooms config ---
   houseWidth = signal(10);
@@ -108,7 +121,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         name: `Room ${i + 1}`,
         width: 6,
         depth: 6,
-        x: i * 8, // spread rooms apart for visibility
+        x: i * 8, // spread rooms apart initially
         z: 0,
         rotationY: 0,
       });
@@ -116,6 +129,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     this.rooms.set(newRooms);
     this.selectedRoomId.set(newRooms[0]?.id ?? null);
+
+    // choose first room as sofa room by default
+    this.sofaRoomId = newRooms[0]?.id ?? null;
   }
 
   selectRoom(id: number) {
@@ -170,6 +186,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.controls.enablePan = true;
     this.controls.enableZoom = true;
     this.controls.target.set(0, 2, 0);
+    // keep camera above ground, no "under the house" view
+    this.controls.minPolarAngle = Math.PI / 6; // 30° down from horizontal
+    this.controls.maxPolarAngle = Math.PI / 2.1;
+
+    this.controls.minDistance = 3;
+    this.controls.maxDistance = 50;
+
     this.controls.update();
 
     const light = new THREE.DirectionalLight(0xffffff, 1);
@@ -182,7 +205,28 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private buildRooms3DFromConfig() {
     const wallHeight = 4;
 
-    // 1. remove old room meshes
+    // ---------- 0. PLOT / GROUND ----------
+    if (this.plotMesh) {
+      this.scene.remove(this.plotMesh);
+      this.plotMesh = null;
+    }
+
+    const plotGeo = new THREE.PlaneGeometry(
+      this.houseWidth(),
+      this.houseDepth()
+    );
+    const plotMat = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+      side: THREE.DoubleSide,
+      opacity: 0.35,
+      transparent: true,
+    });
+    this.plotMesh = new THREE.Mesh(plotGeo, plotMat);
+    this.plotMesh.rotation.x = -Math.PI / 2;
+    this.plotMesh.position.y = 0;
+    this.scene.add(this.plotMesh);
+
+    // ---------- 1. REMOVE OLD ROOM MESHES ----------
     if (this.selectionBox) {
       this.scene.remove(this.selectionBox);
       this.selectionBox = null;
@@ -193,7 +237,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     toRemove.forEach((obj) => this.scene.remove(obj));
 
-    // remove all room meshes from selectableObjects
     this.selectableObjects = this.selectableObjects.filter(
       (obj) => !toRemoveSet.has(obj)
     );
@@ -204,11 +247,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     this.roomObjects = [];
 
-    // 2. create new rooms
+    // ---------- 2. CREATE NEW ROOMS ----------
     for (const room of this.rooms()) {
       const group = new THREE.Group();
       group.position.set(room.x, 0, room.z);
       group.rotation.y = room.rotationY;
+
+      group.userData['isRoomGroup'] = true;
+      group.userData['roomId'] = room.id;
 
       const floorGeo = new THREE.PlaneGeometry(room.width, room.depth);
       const wallGeoX = new THREE.PlaneGeometry(room.width, wallHeight);
@@ -221,45 +267,45 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         side: THREE.BackSide,
       });
 
-      // Floor
+      // FLOOR
       const floor = new THREE.Mesh(floorGeo, floorMat);
       floor.rotation.x = -Math.PI / 2;
       group.add(floor);
       this.selectableObjects.push(floor);
-      this.roomObjects.push(floor); // 👈 IMPORTANT
+      this.roomObjects.push(floor);
 
-      // Back wall (-Z)
+      // BACK WALL (-Z)
       const backWall = new THREE.Mesh(wallGeoX, wallMat.clone());
       backWall.position.set(0, wallHeight / 2, -room.depth / 2);
       group.add(backWall);
       this.selectableObjects.push(backWall);
-      this.roomObjects.push(backWall); // 👈
+      this.roomObjects.push(backWall);
 
-      // Front wall (+Z)
+      // FRONT WALL (+Z)
       const frontWall = new THREE.Mesh(wallGeoX, wallMat.clone());
       frontWall.position.set(0, wallHeight / 2, room.depth / 2);
       frontWall.rotation.y = Math.PI;
       group.add(frontWall);
       this.selectableObjects.push(frontWall);
-      this.roomObjects.push(frontWall); // 👈
+      this.roomObjects.push(frontWall);
 
-      // Left wall (-X)
+      // LEFT WALL (-X)
       const leftWall = new THREE.Mesh(wallGeoZ, wallMat.clone());
       leftWall.position.set(-room.width / 2, wallHeight / 2, 0);
       leftWall.rotation.y = Math.PI / 2;
       group.add(leftWall);
       this.selectableObjects.push(leftWall);
-      this.roomObjects.push(leftWall); // 👈
+      this.roomObjects.push(leftWall);
 
-      // Right wall (+X)
+      // RIGHT WALL (+X)
       const rightWall = new THREE.Mesh(wallGeoZ, wallMat.clone());
       rightWall.position.set(room.width / 2, wallHeight / 2, 0);
       rightWall.rotation.y = -Math.PI / 2;
       group.add(rightWall);
       this.selectableObjects.push(rightWall);
-      this.roomObjects.push(rightWall); // 👈
+      this.roomObjects.push(rightWall);
 
-      // Roof
+      // ROOF
       const roof = new THREE.Mesh(
         new THREE.PlaneGeometry(room.width, room.depth),
         roofMat
@@ -268,10 +314,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       roof.position.y = wallHeight;
       group.add(roof);
       this.selectableObjects.push(roof);
-      this.roomObjects.push(roof); // 👈
+      this.roomObjects.push(roof);
 
+      // add group to scene & track
       this.scene.add(group);
-      // (optional) this.roomObjects.push(group); // only if you also want to track the group
+      this.roomObjects.push(group);
+
+      // 🛋 attach sofa to its room if loaded
+      if (this.sofa && this.sofaRoomId === room.id) {
+        this.scene.remove(this.sofa);
+        group.add(this.sofa);
+        this.sofa.position.set(0, 1, 0); // local pos inside room
+      }
     }
   }
 
@@ -280,14 +334,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     loader.load('/sofa.glb', (gltf) => {
       this.sofa = gltf.scene;
-      this.sofa.position.set(0, 1, 0);
       this.sofa.scale.set(1, 1, 1);
       this.sofa.rotation.y = Math.PI;
 
-      this.scene.add(this.sofa);
+      // default room for sofa
+      if (this.sofaRoomId == null) {
+        this.sofaRoomId = this.rooms()[0]?.id ?? null;
+      }
+
+      this.scene.add(this.sofa); // will be re-parented on next rebuild
       this.selectableObjects.push(this.sofa);
 
       this.applyColorToObject(this.sofa, '#888888');
+
+      // reattach under correct room group if rooms already built
+      this.buildRooms3DFromConfig();
     });
   }
 
@@ -296,6 +357,103 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   };
+
+  // ---------- mouse room-drag (still available, but you can ignore it) ----------
+
+  onCanvasMouseDown(event: MouseEvent) {
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersects = this.raycaster.intersectObjects(
+      this.selectableObjects,
+      true
+    );
+
+    if (intersects.length === 0) {
+      // clicked empty space → NO dragging, keep controls active
+      this.draggingRoom = null;
+      this.controls.enabled = true;
+      return;
+    }
+
+    const hit = intersects[0].object;
+    const roomGroup = this.findRoomGroup(hit);
+    if (!roomGroup) {
+      // hit something that's not a room → just orbit as usual
+      this.draggingRoom = null;
+      this.controls.enabled = true;
+      return;
+    }
+
+    // ✅ only here we actually start dragging a room
+    this.controls.enabled = false;
+    this.draggingRoom = roomGroup;
+
+    const intersection = new THREE.Vector3();
+    this.raycaster.ray.intersectPlane(this.dragPlane, intersection);
+
+    this.dragStartPoint.copy(intersection);
+    this.dragStartPosition.copy(roomGroup.position);
+
+    this.selectedObject = roomGroup;
+    this.updateSelectionHighlight();
+  }
+
+  onCanvasMouseMove(event: MouseEvent) {
+    if (!this.draggingRoom) return;
+
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersection = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(this.dragPlane, intersection)) {
+      return;
+    }
+
+    const delta = intersection.clone().sub(this.dragStartPoint);
+    const newPos = this.dragStartPosition.clone().add(delta);
+
+    const roomId = this.draggingRoom.userData?.['roomId'] as number | undefined;
+    if (roomId == null) return;
+
+    const room = this.rooms().find((r) => r.id === roomId);
+    if (!room) return;
+
+    let newX = newPos.x;
+    let newZ = newPos.z;
+
+    const halfPlotW = this.houseWidth() / 2;
+    const halfPlotD = this.houseDepth() / 2;
+    const halfRoomW = room.width / 2;
+    const halfRoomD = room.depth / 2;
+
+    newX = Math.min(
+      halfPlotW - halfRoomW,
+      Math.max(-halfPlotW + halfRoomW, newX)
+    );
+    newZ = Math.min(
+      halfPlotD - halfRoomD,
+      Math.max(-halfPlotD + halfRoomD, newZ)
+    );
+
+    this.draggingRoom.position.set(newX, 0, newZ);
+    this.updateRoomField(roomId, 'x', newX);
+    this.updateRoomField(roomId, 'z', newZ);
+    this.updateSelectionHighlight();
+  }
+
+  onCanvasMouseUp(_: MouseEvent) {
+    this.controls.enabled = true;
+    this.draggingRoom = null;
+  }
 
   // ---------- color helpers ----------
 
@@ -319,6 +477,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       current = current.parent;
     }
     return obj;
+  }
+
+  private findRoomGroup(obj: THREE.Object3D): THREE.Object3D | null {
+    let current: THREE.Object3D | null = obj;
+
+    while (current) {
+      if (current.userData && current.userData['isRoomGroup']) {
+        return current;
+      }
+      current = current.parent;
+    }
+
+    return null;
   }
 
   // ---------- palette actions ----------
@@ -378,7 +549,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   onCanvasDrop(event: DragEvent) {
     event.preventDefault();
 
-    // get color from state or from dataTransfer
     const colorFromState = this.currentDragColor;
     const colorFromEvent = event.dataTransfer?.getData('text/plain') || null;
     const color = colorFromState || colorFromEvent;
@@ -391,7 +561,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    // raycast against *all selectable objects* (floors, walls, roofs, sofa…)
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const intersects = this.raycaster.intersectObjects(
       this.selectableObjects,
@@ -418,5 +587,61 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     this.selectionBox = new THREE.BoxHelper(this.selectedObject, 0xffff00);
     this.scene.add(this.selectionBox);
+  }
+
+  // ---------- move selected room via buttons / keyboard ----------
+
+  moveSelectedRoom(dx: number, dz: number) {
+    if (!this.selectedObject) return;
+
+    const roomGroup = this.findRoomGroup(this.selectedObject);
+    if (!roomGroup) return;
+
+    const roomId = roomGroup.userData?.['roomId'] as number | undefined;
+    if (roomId == null) return;
+
+    const room = this.rooms().find((r) => r.id === roomId);
+    if (!room) return;
+
+    let newX = roomGroup.position.x + dx;
+    let newZ = roomGroup.position.z + dz;
+
+    const halfPlotW = this.houseWidth() / 2;
+    const halfPlotD = this.houseDepth() / 2;
+    const halfRoomW = room.width / 2;
+    const halfRoomD = room.depth / 2;
+
+    newX = Math.min(
+      halfPlotW - halfRoomW,
+      Math.max(-halfPlotW + halfRoomW, newX)
+    );
+    newZ = Math.min(
+      halfPlotD - halfRoomD,
+      Math.max(-halfPlotD + halfRoomD, newZ)
+    );
+
+    roomGroup.position.set(newX, 0, newZ);
+    this.updateRoomField(roomId, 'x', newX);
+    this.updateRoomField(roomId, 'z', newZ);
+    this.updateSelectionHighlight();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleKeyDown(event: KeyboardEvent) {
+    const step = 0.5;
+    switch (event.key) {
+      case 'ArrowLeft':
+        this.moveSelectedRoom(-step, 0);
+        break;
+      case 'ArrowRight':
+        this.moveSelectedRoom(step, 0);
+        break;
+      case 'ArrowUp':
+        this.moveSelectedRoom(0, -step);
+        break;
+      case 'ArrowDown':
+        this.moveSelectedRoom(0, step);
+        break;
+    }
   }
 }

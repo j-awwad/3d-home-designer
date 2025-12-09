@@ -40,79 +40,81 @@
     </button>
 
     @if (rooms().length) {
-    <h4 style="margin-top: 12px">Rooms</h4>
-    <ul style="list-style: none; padding: 0; margin: 0">
-      @for (room of rooms(); track room.id) {
-      <li
-        (click)="selectRoom(room.id)"
-        [class.selected-room]="room.id === selectedRoomId()"
-        style="padding: 4px 6px; cursor: pointer"
-      >
-        {{ room.name }}
-      </li>
-      }
-    </ul>
-    } @if (selectedRoom(); as r) {
-    <h4 style="margin-top: 10px">Selected: {{ r.name }}</h4>
+      <h4 style="margin-top: 12px">Rooms</h4>
+      <ul style="list-style: none; padding: 0; margin: 0">
+        @for (room of rooms(); track room.id) {
+          <li
+            (click)="selectRoom(room.id)"
+            [class.selected-room]="room.id === selectedRoomId()"
+            style="padding: 4px 6px; cursor: pointer"
+          >
+            {{ room.name }}
+          </li>
+        }
+      </ul>
+    }
 
-    <label>
-      Width
-      <input
-        type="number"
-        [value]="r.width"
-        (input)="
-          updateRoomField(r.id, 'width', $any($event.target).valueAsNumber || 0)
-        "
-      />
-    </label>
+    @if (selectedRoom(); as r) {
+      <h4 style="margin-top: 10px">Selected: {{ r.name }}</h4>
 
-    <label>
-      Depth
-      <input
-        type="number"
-        [value]="r.depth"
-        (input)="
-          updateRoomField(r.id, 'depth', $any($event.target).valueAsNumber || 0)
-        "
-      />
-    </label>
+      <label>
+        Width
+        <input
+          type="number"
+          [value]="r.width"
+          (input)="
+            updateRoomField(r.id, 'width', $any($event.target).valueAsNumber || 0)
+          "
+        />
+      </label>
 
-    <label>
-      Pos X
-      <input
-        type="number"
-        [value]="r.x"
-        (input)="
-          updateRoomField(r.id, 'x', $any($event.target).valueAsNumber || 0)
-        "
-      />
-    </label>
+      <label>
+        Depth
+        <input
+          type="number"
+          [value]="r.depth"
+          (input)="
+            updateRoomField(r.id, 'depth', $any($event.target).valueAsNumber || 0)
+          "
+        />
+      </label>
 
-    <label>
-      Pos Z
-      <input
-        type="number"
-        [value]="r.z"
-        (input)="
-          updateRoomField(r.id, 'z', $any($event.target).valueAsNumber || 0)
-        "
-      />
-    </label>
+      <label>
+        Pos X
+        <input
+          type="number"
+          [value]="r.x"
+          (input)="
+            updateRoomField(r.id, 'x', $any($event.target).valueAsNumber || 0)
+          "
+        />
+      </label>
 
-    <label>
-      Rotation Y
-      <input
-        type="number"
-        [value]="r.rotationY"
-        (input)="
-          updateRoomField(
-            r.id,
-            'rotationY',
-            $any($event.target).valueAsNumber || 0
-          )
-        "
-      />
-    </label>
+      <label>
+        Pos Z
+        <input
+          type="number"
+          [value]="r.z"
+          (input)="
+            updateRoomField(r.id, 'z', $any($event.target).valueAsNumber || 0)
+          "
+        />
+      </label>
+
+      <label>
+        Rotation Y
+        <input
+          type="number"
+          [value]="r.rotationY"
+          (input)="
+            updateRoomField(
+              r.id,
+              'rotationY',
+              $any($event.target).valueAsNumber || 0
+            )
+          "
+        />
+      </label>
     }
   </div>
 
@@ -121,24 +123,40 @@
     <div style="display: flex; align-items: center; gap: 12px; margin: 8px 0">
       <div style="display: flex; gap: 8px">
         @for (c of colors; track c) {
-        <div
-          class="swatch"
-          [style.background]="c"
-          (click)="onSwatchClick(c)"
-          draggable="true"
-          (dragstart)="onColorDragStart($event, c)"
-          title="{{ c }}"
-        ></div>
+          <div
+            class="swatch"
+            [style.background]="c"
+            (click)="onSwatchClick(c)"
+            draggable="true"
+            (dragstart)="onColorDragStart($event, c)"
+            title="{{ c }}"
+          ></div>
         }
       </div>
 
-      <button (click)="randomizeSelectedColor()">Random selected color</button>
+      <button (click)="randomizeSelectedColor()">
+        Random selected color
+      </button>
+    </div>
+
+    <div style="margin: 4px 0; display: flex; gap: 4px; align-items: center">
+      <span style="font-size: 12px">Move selected room:</span>
+      <button (click)="moveSelectedRoom(-0.5, 0)">◀</button>
+      <button (click)="moveSelectedRoom(0.5, 0)">▶</button>
+      <button (click)="moveSelectedRoom(0, -0.5)">▲</button>
+      <button (click)="moveSelectedRoom(0, 0.5)">▼</button>
+      <span style="font-size: 11px; color: #666; margin-left: 8px">
+        (or use arrow keys)
+      </span>
     </div>
 
     <canvas
       #canvas
       style="width: 100%; height: 600px; display: block; border: 1px solid #ddd"
       (click)="onCanvasClick($event)"
+      (mousedown)="onCanvasMouseDown($event)"
+      (mousemove)="onCanvasMouseMove($event)"
+      (mouseup)="onCanvasMouseUp($event)"
       (dragover)="onCanvasDragOver($event)"
       (drop)="onCanvasDrop($event)"
     ></canvas>
