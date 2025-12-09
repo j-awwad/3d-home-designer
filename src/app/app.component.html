@@ -1,5 +1,5 @@
 <div style="display: flex; gap: 16px">
-  <!-- Config panel -->
+  <!-- Left: config -->
   <div style="width: 260px; font-family: sans-serif; font-size: 13px">
     <h3>House</h3>
 
@@ -118,8 +118,9 @@
     }
   </div>
 
-  <!-- Right side: palette + canvas -->
+  <!-- Right: palette, furniture, canvas -->
   <div style="flex: 1">
+    <!-- Palette -->
     <div style="display: flex; align-items: center; gap: 12px; margin: 8px 0">
       <div style="display: flex; gap: 8px">
         @for (c of colors; track c) {
@@ -139,24 +140,49 @@
       </button>
     </div>
 
-    <div style="margin: 4px 0; display: flex; gap: 4px; align-items: center">
-      <span style="font-size: 12px">Move selected room:</span>
-      <button (click)="moveSelectedRoom(-0.5, 0)">◀</button>
-      <button (click)="moveSelectedRoom(0.5, 0)">▶</button>
-      <button (click)="moveSelectedRoom(0, -0.5)">▲</button>
-      <button (click)="moveSelectedRoom(0, 0.5)">▼</button>
-      <span style="font-size: 11px; color: #666; margin-left: 8px">
-        (or use arrow keys)
-      </span>
+    <!-- Furniture add + lock/unlock -->
+    <div style="margin: 8px 0; display: flex; gap: 8px; align-items: center">
+      <span style="font-size: 12px">Add furniture:</span>
+      <!-- adjust URLs to where your GLBs live: e.g. 'assets/sofa.glb' -->
+      <button (click)="addFurniture('/sofa.glb', 'Sofa')">+ Sofa</button>
+      <button (click)="addFurniture('/chair.glb', 'Chair')">+ Chair</button>
+      <button (click)="addFurniture('/table.glb', 'Table')">+ Table</button>
+
+      <button (click)="lockFurnitureToSelectedRoom()">
+        Lock to selected room
+      </button>
+      <button (click)="unlockFurniture()">Unlock</button>
+    </div>
+
+    <!-- Movement controls -->
+    <div style="margin: 4px 0; display: flex; gap: 16px; align-items: center">
+      <div style="display: flex; gap: 4px; align-items: center">
+        <span style="font-size: 12px">Move selected room:</span>
+        <button (click)="moveSelectedRoom(-0.5, 0)">◀</button>
+        <button (click)="moveSelectedRoom(0.5, 0)">▶</button>
+        <button (click)="moveSelectedRoom(0, -0.5)">▲</button>
+        <button (click)="moveSelectedRoom(0, 0.5)">▼</button>
+        <span style="font-size: 11px; color: #666; margin-left: 4px">
+          (or Arrow keys)
+        </span>
+      </div>
+
+      <div style="display: flex; gap: 4px; align-items: center">
+        <span style="font-size: 12px">Move furniture:</span>
+        <button (click)="moveSelectedFurniture(-0.5, 0)">◀</button>
+        <button (click)="moveSelectedFurniture(0.5, 0)">▶</button>
+        <button (click)="moveSelectedFurniture(0, -0.5)">▲</button>
+        <button (click)="moveSelectedFurniture(0, 0.5)">▼</button>
+        <span style="font-size: 11px; color: #666; margin-left: 4px">
+          (or WASD)
+        </span>
+      </div>
     </div>
 
     <canvas
       #canvas
       style="width: 100%; height: 600px; display: block; border: 1px solid #ddd"
       (click)="onCanvasClick($event)"
-      (mousedown)="onCanvasMouseDown($event)"
-      (mousemove)="onCanvasMouseMove($event)"
-      (mouseup)="onCanvasMouseUp($event)"
       (dragover)="onCanvasDragOver($event)"
       (drop)="onCanvasDrop($event)"
     ></canvas>

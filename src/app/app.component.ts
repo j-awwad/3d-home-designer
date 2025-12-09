@@ -22,7 +22,18 @@ type RoomConfig = {
   rotationY: number;
 };
 
-
+type FurnitureConfig = {
+  id: number;
+  name: string;
+  modelUrl: string;
+  roomId: number | null; // which room it belongs to
+  lockedToRoom: boolean; // true = parented to room group
+  x: number; // local position inside room (if locked) or world pos (if not)
+  y: number;
+  z: number;
+  rotationY: number;
+  scale: number;
+};
 
 @Component({
   selector: 'app-root',
@@ -60,25 +71,22 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   // all room meshes/groups
   private roomObjects: THREE.Object3D[] = [];
-
-  // sofa model
-  private sofa!: THREE.Object3D;
-  private sofaRoomId: number | null = null;
+  private roomGroupsById = new Map<number, THREE.Group>();
 
   // selection / picking
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
   private selectableObjects: THREE.Object3D[] = [];
   private selectedObject: THREE.Object3D | null = null;
-  private currentDragColor: string | null = null;
-
   private selectionBox: THREE.BoxHelper | null = null;
 
-  // drag-room state
-  private draggingRoom: THREE.Object3D | null = null;
-  private dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y = 0
-  private dragStartPoint = new THREE.Vector3();
-  private dragStartPosition = new THREE.Vector3();
+  private currentDragColor: string | null = null;
+
+  // furniture state
+  furnitureItems = signal<FurnitureConfig[]>([]);
+  private furnitureObjects = new Map<number, THREE.Object3D>();
+  private nextFurnitureId = 1;
+  private loader = new GLTFLoader();
 
   // --- house + rooms config ---
   houseWidth = signal(10);
@@ -99,7 +107,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.buildRoomsFromCount();
     this.buildRooms3DFromConfig();
 
-    this.loadSofa();
     this.startLoop();
   }
 
@@ -130,8 +137,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.rooms.set(newRooms);
     this.selectedRoomId.set(newRooms[0]?.id ?? null);
 
-    // choose first room as sofa room by default
-    this.sofaRoomId = newRooms[0]?.id ?? null;
+    // when room layout changes, rebuild the 3D
+    this.buildRooms3DFromConfig();
   }
 
   selectRoom(id: number) {
@@ -186,10 +193,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.controls.enablePan = true;
     this.controls.enableZoom = true;
     this.controls.target.set(0, 2, 0);
-    // keep camera above ground, no "under the house" view
-    this.controls.minPolarAngle = Math.PI / 6; // 30° down from horizontal
-    this.controls.maxPolarAngle = Math.PI / 2.1;
 
+    // keep camera above ground, 3D but not under floor
+    this.controls.minPolarAngle = Math.PI / 6; // 30°
+    this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.minDistance = 3;
     this.controls.maxDistance = 50;
 
@@ -246,6 +253,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
 
     this.roomObjects = [];
+    this.roomGroupsById.clear();
 
     // ---------- 2. CREATE NEW ROOMS ----------
     for (const room of this.rooms()) {
@@ -255,6 +263,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       group.userData['isRoomGroup'] = true;
       group.userData['roomId'] = room.id;
+
+      this.roomGroupsById.set(room.id, group);
 
       const floorGeo = new THREE.PlaneGeometry(room.width, room.depth);
       const wallGeoX = new THREE.PlaneGeometry(room.width, wallHeight);
@@ -316,40 +326,150 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.selectableObjects.push(roof);
       this.roomObjects.push(roof);
 
-      // add group to scene & track
       this.scene.add(group);
       this.roomObjects.push(group);
+    }
 
-      // 🛋 attach sofa to its room if loaded
-      if (this.sofa && this.sofaRoomId === room.id) {
-        this.scene.remove(this.sofa);
-        group.add(this.sofa);
-        this.sofa.position.set(0, 1, 0); // local pos inside room
-      }
+    // ---------- 3. RE-ATTACH FURNITURE ACCORDING TO CONFIG ----------
+    for (const item of this.furnitureItems()) {
+      const obj = this.furnitureObjects.get(item.id);
+      if (!obj) continue;
+      this.attachFurnitureObject(item, obj);
     }
   }
 
-  private loadSofa() {
-    const loader = new GLTFLoader();
+  // ---------- furniture ----------
 
-    loader.load('/sofa.glb', (gltf) => {
-      this.sofa = gltf.scene;
-      this.sofa.scale.set(1, 1, 1);
-      this.sofa.rotation.y = Math.PI;
+  addFurniture(modelUrl: string, name: string, roomId: number | null = null) {
+    const id = this.nextFurnitureId++;
+    const item: FurnitureConfig = {
+      id,
+      name,
+      modelUrl,
+      roomId, // null = not assigned yet
+      lockedToRoom: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationY: 0,
+      scale: 1,
+    };
 
-      // default room for sofa
-      if (this.sofaRoomId == null) {
-        this.sofaRoomId = this.rooms()[0]?.id ?? null;
-      }
+    this.furnitureItems.update((list) => [...list, item]);
 
-      this.scene.add(this.sofa); // will be re-parented on next rebuild
-      this.selectableObjects.push(this.sofa);
+    this.loader.load(modelUrl, (gltf) => {
+      const obj = gltf.scene;
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
 
-      this.applyColorToObject(this.sofa, '#888888');
+      obj.userData['isFurniture'] = true;
+      obj.userData['furnitureId'] = id;
 
-      // reattach under correct room group if rooms already built
-      this.buildRooms3DFromConfig();
+      // initial position: just drop at origin
+      obj.position.set(0, 0, 0);
+      obj.scale.set(item.scale, item.scale, item.scale);
+      obj.rotation.y = item.rotationY;
+
+      this.scene.add(obj);
+      this.selectableObjects.push(obj);
+      this.furnitureObjects.set(id, obj);
     });
+  }
+
+  lockFurnitureToSelectedRoom() {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const room = this.selectedRoom();
+    if (!room) return;
+
+    // mark config as locked to this room
+    this.furnitureItems.update((list) =>
+      list.map((f) =>
+        f.id === furnitureId ? { ...f, lockedToRoom: true, roomId: room.id } : f
+      )
+    );
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    const roomGroup = this.roomGroupsById.get(room.id);
+    if (!roomGroup) return;
+
+    // world -> local
+    obj.updateMatrixWorld();
+    const worldPos = new THREE.Vector3();
+    worldPos.setFromMatrixPosition(obj.matrixWorld);
+    roomGroup.worldToLocal(worldPos);
+
+    this.furnitureItems.update((list) =>
+      list.map((f) =>
+        f.id === furnitureId
+          ? { ...f, x: worldPos.x, y: worldPos.y, z: worldPos.z }
+          : f
+      )
+    );
+
+    const updated = this.furnitureItems().find((f) => f.id === furnitureId)!;
+    this.attachFurnitureObject(updated, obj);
+  }
+
+  unlockFurniture() {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    // local -> world
+    obj.updateMatrixWorld();
+    const worldPos = new THREE.Vector3();
+    worldPos.setFromMatrixPosition(obj.matrixWorld);
+
+    this.furnitureItems.update((list) =>
+      list.map((f) =>
+        f.id === furnitureId
+          ? {
+              ...f,
+              lockedToRoom: false,
+              roomId: null,
+              x: worldPos.x,
+              y: worldPos.y,
+              z: worldPos.z,
+            }
+          : f
+      )
+    );
+
+    this.scene.attach(obj);
+  }
+
+  private attachFurnitureObject(item: FurnitureConfig, obj: THREE.Object3D) {
+    if (item.lockedToRoom && item.roomId != null) {
+      const roomGroup = this.roomGroupsById.get(item.roomId);
+      if (!roomGroup) return;
+
+      this.scene.attach(obj); // ensure world pos
+      roomGroup.add(obj);
+      obj.position.set(item.x, item.y, item.z);
+    } else {
+      this.scene.add(obj);
+      obj.position.set(item.x, item.y, item.z);
+    }
+    obj.rotation.y = item.rotationY;
+    obj.scale.set(item.scale, item.scale, item.scale);
   }
 
   private startLoop = () => {
@@ -357,103 +477,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   };
-
-  // ---------- mouse room-drag (still available, but you can ignore it) ----------
-
-  onCanvasMouseDown(event: MouseEvent) {
-    const canvas = this.canvasRef.nativeElement;
-    const rect = canvas.getBoundingClientRect();
-
-    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersects = this.raycaster.intersectObjects(
-      this.selectableObjects,
-      true
-    );
-
-    if (intersects.length === 0) {
-      // clicked empty space → NO dragging, keep controls active
-      this.draggingRoom = null;
-      this.controls.enabled = true;
-      return;
-    }
-
-    const hit = intersects[0].object;
-    const roomGroup = this.findRoomGroup(hit);
-    if (!roomGroup) {
-      // hit something that's not a room → just orbit as usual
-      this.draggingRoom = null;
-      this.controls.enabled = true;
-      return;
-    }
-
-    // ✅ only here we actually start dragging a room
-    this.controls.enabled = false;
-    this.draggingRoom = roomGroup;
-
-    const intersection = new THREE.Vector3();
-    this.raycaster.ray.intersectPlane(this.dragPlane, intersection);
-
-    this.dragStartPoint.copy(intersection);
-    this.dragStartPosition.copy(roomGroup.position);
-
-    this.selectedObject = roomGroup;
-    this.updateSelectionHighlight();
-  }
-
-  onCanvasMouseMove(event: MouseEvent) {
-    if (!this.draggingRoom) return;
-
-    const canvas = this.canvasRef.nativeElement;
-    const rect = canvas.getBoundingClientRect();
-
-    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersection = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(this.dragPlane, intersection)) {
-      return;
-    }
-
-    const delta = intersection.clone().sub(this.dragStartPoint);
-    const newPos = this.dragStartPosition.clone().add(delta);
-
-    const roomId = this.draggingRoom.userData?.['roomId'] as number | undefined;
-    if (roomId == null) return;
-
-    const room = this.rooms().find((r) => r.id === roomId);
-    if (!room) return;
-
-    let newX = newPos.x;
-    let newZ = newPos.z;
-
-    const halfPlotW = this.houseWidth() / 2;
-    const halfPlotD = this.houseDepth() / 2;
-    const halfRoomW = room.width / 2;
-    const halfRoomD = room.depth / 2;
-
-    newX = Math.min(
-      halfPlotW - halfRoomW,
-      Math.max(-halfPlotW + halfRoomW, newX)
-    );
-    newZ = Math.min(
-      halfPlotD - halfRoomD,
-      Math.max(-halfPlotD + halfRoomD, newZ)
-    );
-
-    this.draggingRoom.position.set(newX, 0, newZ);
-    this.updateRoomField(roomId, 'x', newX);
-    this.updateRoomField(roomId, 'z', newZ);
-    this.updateSelectionHighlight();
-  }
-
-  onCanvasMouseUp(_: MouseEvent) {
-    this.controls.enabled = true;
-    this.draggingRoom = null;
-  }
 
   // ---------- color helpers ----------
 
@@ -589,7 +612,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.scene.add(this.selectionBox);
   }
 
-  // ---------- move selected room via buttons / keyboard ----------
+  // ---------- movement via buttons / keyboard ----------
 
   moveSelectedRoom(dx: number, dz: number) {
     if (!this.selectedObject) return;
@@ -626,22 +649,90 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.updateSelectionHighlight();
   }
 
+  moveSelectedFurniture(dx: number, dz: number) {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const item = this.furnitureItems().find((f) => f.id === furnitureId);
+    if (!item) return;
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    if (item.lockedToRoom && obj.parent) {
+      obj.position.x += dx;
+      obj.position.z += dz;
+
+      this.furnitureItems.update((list) =>
+        list.map((f) =>
+          f.id === furnitureId
+            ? { ...f, x: obj.position.x, z: obj.position.z }
+            : f
+        )
+      );
+    } else {
+      obj.position.x += dx;
+      obj.position.z += dz;
+
+      this.furnitureItems.update((list) =>
+        list.map((f) =>
+          f.id === furnitureId
+            ? { ...f, x: obj.position.x, z: obj.position.z }
+            : f
+        )
+      );
+    }
+
+    this.updateSelectionHighlight();
+  }
+
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent) {
     const step = 0.5;
-    switch (event.key) {
-      case 'ArrowLeft':
-        this.moveSelectedRoom(-step, 0);
-        break;
-      case 'ArrowRight':
-        this.moveSelectedRoom(step, 0);
-        break;
-      case 'ArrowUp':
-        this.moveSelectedRoom(0, -step);
-        break;
-      case 'ArrowDown':
-        this.moveSelectedRoom(0, step);
-        break;
+
+    // if a furniture is selected, use WASD; if a room is selected, use arrows
+    const isFurniture = this.selectedObject?.userData?.['furnitureId'] != null;
+    const isRoom =
+      this.findRoomGroup(this.selectedObject ?? new THREE.Object3D()) != null;
+
+    if (isFurniture) {
+      switch (event.key) {
+        case 'a':
+        case 'A':
+          this.moveSelectedFurniture(-step, 0);
+          break;
+        case 'd':
+        case 'D':
+          this.moveSelectedFurniture(step, 0);
+          break;
+        case 'w':
+        case 'W':
+          this.moveSelectedFurniture(0, -step);
+          break;
+        case 's':
+        case 'S':
+          this.moveSelectedFurniture(0, step);
+          break;
+      }
+    } else if (isRoom) {
+      switch (event.key) {
+        case 'ArrowLeft':
+          this.moveSelectedRoom(-step, 0);
+          break;
+        case 'ArrowRight':
+          this.moveSelectedRoom(step, 0);
+          break;
+        case 'ArrowUp':
+          this.moveSelectedRoom(0, -step);
+          break;
+        case 'ArrowDown':
+          this.moveSelectedRoom(0, step);
+          break;
+      }
     }
   }
 }
