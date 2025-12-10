@@ -31,7 +31,7 @@ type FurnitureConfig = {
   x: number; // local position inside room (if locked) or world pos (if not)
   y: number;
   z: number;
-  rotationY: number;
+  rotationY: number; // radians
   scale: number;
 };
 
@@ -137,7 +137,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.rooms.set(newRooms);
     this.selectedRoomId.set(newRooms[0]?.id ?? null);
 
-    // when room layout changes, rebuild the 3D
     this.buildRooms3DFromConfig();
   }
 
@@ -164,7 +163,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.rooms.set(updated);
   }
 
-  // called by "Apply size / rebuild house" button
   rebuildHouse() {
     this.buildRooms3DFromConfig();
   }
@@ -194,7 +192,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.controls.enableZoom = true;
     this.controls.target.set(0, 2, 0);
 
-    // keep camera above ground, 3D but not under floor
     this.controls.minPolarAngle = Math.PI / 6; // 30°
     this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.minDistance = 3;
@@ -208,11 +205,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
   }
 
-  // build one 3D room per RoomConfig
+  // ---------- Rooms & ground ----------
+
   private buildRooms3DFromConfig() {
     const wallHeight = 4;
 
-    // ---------- 0. PLOT / GROUND ----------
+    // 0. PLOT / GROUND
     if (this.plotMesh) {
       this.scene.remove(this.plotMesh);
       this.plotMesh = null;
@@ -233,7 +231,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.plotMesh.position.y = 0;
     this.scene.add(this.plotMesh);
 
-    // ---------- 1. REMOVE OLD ROOM MESHES ----------
+    // 1. REMOVE OLD ROOM MESHES
     if (this.selectionBox) {
       this.scene.remove(this.selectionBox);
       this.selectionBox = null;
@@ -255,7 +253,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.roomObjects = [];
     this.roomGroupsById.clear();
 
-    // ---------- 2. CREATE NEW ROOMS ----------
+    // 2. CREATE NEW ROOMS
     for (const room of this.rooms()) {
       const group = new THREE.Group();
       group.position.set(room.x, 0, room.z);
@@ -330,7 +328,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.roomObjects.push(group);
     }
 
-    // ---------- 3. RE-ATTACH FURNITURE ACCORDING TO CONFIG ----------
+    // 3. RE-ATTACH FURNITURE
     for (const item of this.furnitureItems()) {
       const obj = this.furnitureObjects.get(item.id);
       if (!obj) continue;
@@ -346,7 +344,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       id,
       name,
       modelUrl,
-      roomId, // null = not assigned yet
+      roomId,
       lockedToRoom: false,
       x: 0,
       y: 0,
@@ -369,7 +367,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       obj.userData['isFurniture'] = true;
       obj.userData['furnitureId'] = id;
 
-      // initial position: just drop at origin
       obj.position.set(0, 0, 0);
       obj.scale.set(item.scale, item.scale, item.scale);
       obj.rotation.y = item.rotationY;
@@ -391,7 +388,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const room = this.selectedRoom();
     if (!room) return;
 
-    // mark config as locked to this room
     this.furnitureItems.update((list) =>
       list.map((f) =>
         f.id === furnitureId ? { ...f, lockedToRoom: true, roomId: room.id } : f
@@ -404,7 +400,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const roomGroup = this.roomGroupsById.get(room.id);
     if (!roomGroup) return;
 
-    // world -> local
     obj.updateMatrixWorld();
     const worldPos = new THREE.Vector3();
     worldPos.setFromMatrixPosition(obj.matrixWorld);
@@ -433,7 +428,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const obj = this.furnitureObjects.get(furnitureId);
     if (!obj) return;
 
-    // local -> world
     obj.updateMatrixWorld();
     const worldPos = new THREE.Vector3();
     worldPos.setFromMatrixPosition(obj.matrixWorld);
@@ -461,7 +455,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       const roomGroup = this.roomGroupsById.get(item.roomId);
       if (!roomGroup) return;
 
-      this.scene.attach(obj); // ensure world pos
+      this.scene.attach(obj);
       roomGroup.add(obj);
       obj.position.set(item.x, item.y, item.z);
     } else {
@@ -504,14 +498,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   private findRoomGroup(obj: THREE.Object3D): THREE.Object3D | null {
     let current: THREE.Object3D | null = obj;
-
     while (current) {
       if (current.userData && current.userData['isRoomGroup']) {
         return current;
       }
       current = current.parent;
     }
-
     return null;
   }
 
@@ -558,7 +550,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   onColorDragStart(event: DragEvent, color: string) {
     this.currentDragColor = color;
-
     if (event.dataTransfer) {
       event.dataTransfer.setData('text/plain', color);
       event.dataTransfer.effectAllowed = 'copy';
@@ -575,7 +566,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const colorFromState = this.currentDragColor;
     const colorFromEvent = event.dataTransfer?.getData('text/plain') || null;
     const color = colorFromState || colorFromEvent;
-
     if (!color) return;
 
     const canvas = this.canvasRef.nativeElement;
@@ -612,7 +602,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.scene.add(this.selectionBox);
   }
 
-  // ---------- movement via buttons / keyboard ----------
+  // ---------- movement / transform helpers ----------
 
   moveSelectedRoom(dx: number, dz: number) {
     if (!this.selectedObject) return;
@@ -690,11 +680,87 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.updateSelectionHighlight();
   }
 
+  // lift / lower furniture
+  adjustSelectedFurnitureHeight(dy: number) {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const item = this.furnitureItems().find((f) => f.id === furnitureId);
+    if (!item) return;
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    obj.position.y += dy;
+
+    this.furnitureItems.update((list) =>
+      list.map((f) => (f.id === furnitureId ? { ...f, y: obj.position.y } : f))
+    );
+
+    this.updateSelectionHighlight();
+  }
+
+  // scale furniture (uniform)
+  scaleSelectedFurniture(factor: number) {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const item = this.furnitureItems().find((f) => f.id === furnitureId);
+    if (!item) return;
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    const newScale = Math.max(0.1, item.scale * factor);
+
+    obj.scale.set(newScale, newScale, newScale);
+
+    this.furnitureItems.update((list) =>
+      list.map((f) => (f.id === furnitureId ? { ...f, scale: newScale } : f))
+    );
+
+    this.updateSelectionHighlight();
+  }
+
+  // rotate furniture around Y (degrees)
+  rotateSelectedFurniture(deltaDegrees: number) {
+    if (!this.selectedObject) return;
+
+    const furnitureId = this.selectedObject.userData?.['furnitureId'] as
+      | number
+      | undefined;
+    if (!furnitureId) return;
+
+    const item = this.furnitureItems().find((f) => f.id === furnitureId);
+    if (!item) return;
+
+    const obj = this.furnitureObjects.get(furnitureId);
+    if (!obj) return;
+
+    const deltaRad = (deltaDegrees * Math.PI) / 180;
+    const newRot = item.rotationY + deltaRad;
+
+    obj.rotation.y = newRot;
+
+    this.furnitureItems.update((list) =>
+      list.map((f) => (f.id === furnitureId ? { ...f, rotationY: newRot } : f))
+    );
+
+    this.updateSelectionHighlight();
+  }
+
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent) {
     const step = 0.5;
 
-    // if a furniture is selected, use WASD; if a room is selected, use arrows
     const isFurniture = this.selectedObject?.userData?.['furnitureId'] != null;
     const isRoom =
       this.findRoomGroup(this.selectedObject ?? new THREE.Object3D()) != null;
@@ -716,6 +782,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         case 's':
         case 'S':
           this.moveSelectedFurniture(0, step);
+          break;
+        case 'q':
+        case 'Q':
+          this.adjustSelectedFurnitureHeight(0.1);
+          break;
+        case 'e':
+        case 'E':
+          this.adjustSelectedFurnitureHeight(-0.1);
           break;
       }
     } else if (isRoom) {

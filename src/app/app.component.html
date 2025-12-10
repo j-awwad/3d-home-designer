@@ -143,7 +143,7 @@
     <!-- Furniture add + lock/unlock -->
     <div style="margin: 8px 0; display: flex; gap: 8px; align-items: center">
       <span style="font-size: 12px">Add furniture:</span>
-      <!-- adjust URLs to where your GLBs live: e.g. 'assets/sofa.glb' -->
+      <!-- adjust URLs to your actual GLB paths -->
       <button (click)="addFurniture('/sofa.glb', 'Sofa')">+ Sofa</button>
       <button (click)="addFurniture('/chair.glb', 'Chair')">+ Chair</button>
       <button (click)="addFurniture('/table.glb', 'Table')">+ Table</button>
@@ -154,28 +154,50 @@
       <button (click)="unlockFurniture()">Unlock</button>
     </div>
 
-    <!-- Movement controls -->
-    <div style="margin: 4px 0; display: flex; gap: 16px; align-items: center">
-      <div style="display: flex; gap: 4px; align-items: center">
-        <span style="font-size: 12px">Move selected room:</span>
-        <button (click)="moveSelectedRoom(-0.5, 0)">◀</button>
-        <button (click)="moveSelectedRoom(0.5, 0)">▶</button>
-        <button (click)="moveSelectedRoom(0, -0.5)">▲</button>
-        <button (click)="moveSelectedRoom(0, 0.5)">▼</button>
-        <span style="font-size: 11px; color: #666; margin-left: 4px">
-          (or Arrow keys)
-        </span>
+    <!-- Movement & transform controls -->
+    <div style="margin: 4px 0; display: flex; flex-direction: column; gap: 4px">
+      <div style="display: flex; gap: 16px; align-items: center">
+        <div style="display: flex; gap: 4px; align-items: center">
+          <span style="font-size: 12px">Move selected room:</span>
+          <button (click)="moveSelectedRoom(-0.5, 0)">◀</button>
+          <button (click)="moveSelectedRoom(0.5, 0)">▶</button>
+          <button (click)="moveSelectedRoom(0, -0.5)">▲</button>
+          <button (click)="moveSelectedRoom(0, 0.5)">▼</button>
+          <span style="font-size: 11px; color: #666; margin-left: 4px">
+            (or Arrow keys)
+          </span>
+        </div>
       </div>
 
-      <div style="display: flex; gap: 4px; align-items: center">
-        <span style="font-size: 12px">Move furniture:</span>
-        <button (click)="moveSelectedFurniture(-0.5, 0)">◀</button>
-        <button (click)="moveSelectedFurniture(0.5, 0)">▶</button>
-        <button (click)="moveSelectedFurniture(0, -0.5)">▲</button>
-        <button (click)="moveSelectedFurniture(0, 0.5)">▼</button>
-        <span style="font-size: 11px; color: #666; margin-left: 4px">
-          (or WASD)
-        </span>
+      <div style="display: flex; gap: 16px; align-items: center">
+        <div style="display: flex; gap: 4px; align-items: center">
+          <span style="font-size: 12px">Move furniture (XZ):</span>
+          <button (click)="moveSelectedFurniture(-0.5, 0)">◀</button>
+          <button (click)="moveSelectedFurniture(0.5, 0)">▶</button>
+          <button (click)="moveSelectedFurniture(0, -0.5)">▲</button>
+          <button (click)="moveSelectedFurniture(0, 0.5)">▼</button>
+          <span style="font-size: 11px; color: #666; margin-left: 4px">
+            (or WASD)
+          </span>
+        </div>
+
+        <div style="display: flex; gap: 4px; align-items: center">
+          <span style="font-size: 12px">Height (Y):</span>
+          <button (click)="adjustSelectedFurnitureHeight(0.1)">Up</button>
+          <button (click)="adjustSelectedFurnitureHeight(-0.1)">Down</button>
+        </div>
+
+        <div style="display: flex; gap: 4px; align-items: center">
+          <span style="font-size: 12px">Scale:</span>
+          <button (click)="scaleSelectedFurniture(1.1)">+</button>
+          <button (click)="scaleSelectedFurniture(0.9)">−</button>
+        </div>
+
+        <div style="display: flex; gap: 4px; align-items: center">
+          <span style="font-size: 12px">Rotate:</span>
+          <button (click)="rotateSelectedFurniture(-15)">⟲</button>
+          <button (click)="rotateSelectedFurniture(15)">⟳</button>
+        </div>
       </div>
     </div>
 
